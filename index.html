@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>フローチャート作成ツール</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background-color: #fdfdfd;
+    }
+
+    #toolbar {
+      padding: 10px;
+      background: #eee;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    #toolbar button {
+      background-color: #f48fb1;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+      transition: 0.2s;
+    }
+
+    #toolbar button:hover {
+      background-color: #ec407a;
+    }
+
+    #edit-toolbar {
+      padding: 5px;
+      background: #ddd;
+      display: none;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #canvas {
+      position: relative;
+      width: 100vw;
+      height: calc(100vh - 80px);
+      background: white; /* ← ここを白に */
+      overflow: hidden;
+    }
+
+    .node {
+      position: absolute;
+      padding: 10px;
+      background: white;
+      border: 2px solid black; /* ← 黒い縁 */
+      border-radius: 12px;
+      cursor: move;
+      min-width: 100px;
+      text-align: center;
+      user-select: none;
+      color: black;
+      box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1); /* 軽い影を追加 */
+    }
+
+    .decision {
+      width: 100px;
+      height: 100px;
+      background: white;
+      border: 2px solid black; /* ← 黒の破線に */
+      transform: rotate(45deg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: black;
+    }
+
+    .decision span {
+      transform: rotate(-45deg);
+      text-align: center;
+      width: 100px;
+      white-space: pre-wrap;
+      user-select: none;
+      color: inherit;
+    }
+
+    svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    marker {
+      fill: black;
+    }
+
+    line, polyline {
+      stroke: black;
+      stroke-width: 2;
+      fill: none;
+      marker-end: url(#arrow);
+      cursor: pointer;
+    }
+
+    .connection-label {
+      font-size: 12px;
+      fill: black;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #edit-toolbar input,
+    #edit-toolbar button {
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <button onclick="addNode('process')">処理ノードを追加</button>
+    <button onclick="addNode('decision')">条件分岐ノードを追加</button>
+    <button onclick="exportImage()">画像として保存</button>
+    <button onclick="undo()">Undo</button>
+    <button onclick="redo()">Redo</button>
+  </div>
+
+  <div id="edit-toolbar">
+    <input id="edit-input" type="text" placeholder="テキスト入力" />
+    <input id="bgcolor-input" type="color" title="背景色を変更" />
+    <input id="fontcolor-input" type="color" title="文字色を変更" />
+    <button onclick="updateNode()">変更</button>
+    <button onclick="deleteNode()">🗑️ノード削除</button>
+    <input id="conn-label-input" type="text" placeholder="接続ラベル" style="display:none;" />
+    <button id="conn-label-update-btn" style="display:none;" onclick="updateConnectionLabel()">接続ラベル変更</button>
+  </div>
+
+  <div id="canvas">
+    <svg id="lines">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script>
+    let selectedNode = null;
+    let connections = [];
+    let selectedConnection = null;
+    let history = [];
+    let redoStack = [];
+
+    function saveHistory() {
+      history.push(JSON.stringify({
+        nodes: [...document.querySelectorAll('.node')].map(node => ({
+          left: node.style.left,
+          top: node.style.top,
+          text: node.classList.contains('decision') ? node.querySelector('span').textContent : node.textContent,
+          type: node.classList.contains('decision') ? 'decision' : 'process',
+          bgcolor: node.style.backgroundColor || '',
+          fontcolor: node.style.color || ''
+        })),
+        connections: connections.map(c => ({
+          fromIndex: [...document.querySelectorAll('.node')].indexOf(c.from),
+          toIndex: [...document.querySelectorAll('.node')].indexOf(c.to),
+          label: c.label || ''
+        }))
+      }));
+      redoStack = [];
+    }
+
+    function undo() {
+      if (history.length < 2) return;
+      redoStack.push(history.pop());
+      restoreHistory(history[history.length - 1]);
+    }
+
+    function redo() {
+      if (redoStack.length === 0) return;
+      const next = redoStack.pop();
+      history.push(next);
+      restoreHistory(next);
+    }
+
+    function restoreHistory(snapshot) {
+      const data = JSON.parse(snapshot);
+      document.querySelectorAll('.node').forEach(n => n.remove());
+      connections = [];
+      data.nodes.forEach(nodeData => {
+        const node = document.createElement('div');
+        node.className = 'node ' + nodeData.type;
+        node.style.left = nodeData.left;
+        node.style.top = nodeData.top;
+        node.style.backgroundColor = nodeData.bgcolor || '';
+        node.style.color = nodeData.fontcolor || 'black';
+        if (nodeData.type === 'decision') {
+          const span = document.createElement('span');
+          span.textContent = nodeData.text;
+          node.appendChild(span);
+        } else {
+          node.textContent = nodeData.text;
+        }
+        node.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectNode(node);
+        });
+        makeDraggable(node);
+        document.getElementById('canvas').appendChild(node);
+      });
+      data.connections.forEach(c => {
+        const from = document.querySelectorAll('.node')[c.fromIndex];
+        const to = document.querySelectorAll('.node')[c.toIndex];
+        if (from && to) connections.push({ from, to, label: c.label });
+      });
+      drawConnections();
+    }
+
+    function addNode(type) {
+      const node = document.createElement('div');
+      node.className = 'node ' + type;
+      node.style.left = '100px';
+      node.style.top = '100px';
+      node.style.color = 'black'; // 追加: 文字色初期値
+      if (type === 'decision') {
+        const span = document.createElement('span');
+        span.textContent = '条件?';
+        node.appendChild(span);
+      } else {
+        node.textContent = '処理';
+      }
+      node.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectNode(node);
+      });
+      makeDraggable(node);
+      document.getElementById('canvas').appendChild(node);
+      saveHistory();
+    }
+
+    function makeDraggable(el) {
+      let offsetX, offsetY;
+      el.onmousedown = function(e) {
+        offsetX = e.offsetX;
+        offsetY = e.offsetY;
+        function move(e) {
+          el.style.left = `${e.pageX - offsetX}px`;
+          el.style.top = `${e.pageY - offsetY}px`;
+          drawConnections();
+        }
+        function up() {
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', up);
+          saveHistory();
+        }
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+      }
+    }
+
+    function selectNode(node) {
+      selectedNode = node;
+      selectedConnection = null;
+      const toolbar = document.getElementById('edit-toolbar');
+      toolbar.style.display = 'flex';
+
+      // ノードテキスト編集用
+      const input = document.getElementById('edit-input');
+      input.style.display = 'inline-block';
+      if (node.classList.contains('decision')) {
+        input.value = node.querySelector('span').textContent;
+      } else {
+        input.value = node.textContent;
+      }
+
+      // 背景色入力欄を表示・設定
+      const bgcolorInput = document.getElementById('bgcolor-input');
+      bgcolorInput.style.display = 'inline-block';
+      bgcolorInput.value = rgbToHex(node.style.backgroundColor) || '#ffffff';
+
+      // 文字色入力欄を表示・設定
+      const fontcolorInput = document.getElementById('fontcolor-input');
+      fontcolorInput.style.display = 'inline-block';
+      fontcolorInput.value = rgbToHex(node.style.color) || '#000000';
+
+      // 接続ラベル入力欄は隠す
+      document.getElementById('conn-label-input').style.display = 'none';
+      document.getElementById('conn-label-update-btn').style.display = 'none';
+    }
+
+    function updateNode() {
+      if (!selectedNode) return;
+      const input = document.getElementById('edit-input');
+      if (selectedNode.classList.contains('decision')) {
+        selectedNode.querySelector('span').textContent = input.value;
+      } else {
+        selectedNode.textContent = input.value;
+      }
+      const bgcolorInput = document.getElementById('bgcolor-input');
+      selectedNode.style.backgroundColor = bgcolorInput.value;
+      const fontcolorInput = document.getElementById('fontcolor-input');
+      selectedNode.style.color = fontcolorInput.value;
+      saveHistory();
+    }
+
+    function deleteNode() {
+      if (selectedNode) {
+        connections = connections.filter(c => c.from !== selectedNode && c.to !== selectedNode);
+        selectedNode.remove();
+        selectedNode = null;
+        document.getElementById('edit-toolbar').style.display = 'none';
+        drawConnections();
+        saveHistory();
+      }
+    }
+
+    // 以下、接続関係の操作（接続ラベルの編集等）はそのまま維持
+
+    function selectConnection(index) {
+      selectedConnection = index;
+      selectedNode = null;
+      const toolbar = document.getElementById('edit-toolbar');
+      toolbar.style.display = 'flex';
+
+      // 接続ラベル編集用入力欄表示
+      const connLabelInput = document.getElementById('conn-label-input');
+      const connLabelBtn = document.getElementById('conn-label-update-btn');
+      connLabelInput.style.display = 'inline-block';
+      connLabelBtn.style.display = 'inline-block';
+      connLabelInput.value = connections[index].label || '';
+
+      // ノード編集用のテキスト・色入力は非表示
+      document.getElementById('edit-input').style.display = 'none';
+      document.getElementById('bgcolor-input').style.display = 'none';
+      document.getElementById('fontcolor-input').style.display = 'none';
+    }
+
+    function updateConnectionLabel() {
+      if (selectedConnection === null) return;
+      const input = document.getElementById('conn-label-input');
+      connections[selectedConnection].label = input.value;
+      drawConnections();
+      saveHistory();
+    }
+
+    // 削除ボタンは消したのでこの関数は残しますが編集ツールバーからの呼び出しはなし
+
+    function drawConnections() {
+      const svg = document.getElementById('lines');
+      svg.innerHTML = svg.innerHTML.split('</defs>')[0] + '</defs>';
+      connections.forEach(({ from, to, label }, index) => {
+        const fromRect = from.getBoundingClientRect();
+        const toRect = to.getBoundingClientRect();
+        const canvasRect = document.getElementById('canvas').getBoundingClientRect();
+
+        const x1 = fromRect.left + fromRect.width / 2 - canvasRect.left;
+        const y1 = fromRect.top + fromRect.height / 2 - canvasRect.top;
+        const x2 = toRect.left + toRect.width / 2 - canvasRect.left;
+        const y2 = toRect.top + toRect.height / 2 - canvasRect.top;
+
+        const midX = (x1 + x2) / 2;
+
+        const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        polyline.setAttribute("points", `${x1},${y1} ${midX},${y1} ${midX},${y2} ${x2},${y2}`);
+        polyline.setAttribute('data-index', index);
+        polyline.style.cursor = 'pointer';
+        polyline.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectConnection(index);
+        });
+        svg.appendChild(polyline);
+
+        if (label) {
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", midX + 5);
+          text.setAttribute("y", (y1 + y2) / 2);
+          text.setAttribute("class", "connection-label");
+          text.textContent = label;
+          svg.appendChild(text);
+        }
+      });
+    }
+
+    document.getElementById('canvas').addEventListener('click', () => {
+      selectedNode = null;
+      selectedConnection = null;
+      document.getElementById('edit-toolbar').style.display = 'none';
+    });
+
+    // ノード間の接続（右クリックで接続作成）はそのまま
+
+    document.getElementById('canvas').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const nodes = document.elementsFromPoint(e.clientX, e.clientY).filter(el => el.classList.contains('node'));
+      if (nodes.length === 1 && selectedNode && selectedNode !== nodes[0]) {
+        const label = prompt("接続ラベルを入力（任意）：", "");
+        connections.push({ from: selectedNode, to: nodes[0], label });
+        drawConnections();
+        saveHistory();
+      }
+    });
+
+    // 自動整列関数は削除しました
+
+    // ヘルパー：rgbを16進数カラーコードに変換
+    function rgbToHex(rgb) {
+      if (!rgb) return '';
+      const result = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/i.exec(rgb);
+      if (!result) return '';
+      return "#" + [1,2,3].map(i => {
+        const hex = parseInt(result[i]).toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+      }).join('');
+    }
+  </script>
+</body>
+</html>
