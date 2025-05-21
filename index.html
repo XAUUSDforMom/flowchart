@@ -49,20 +49,37 @@
       background: white; /* ← ここを白に */
       overflow: hidden;
     }
+.node {
+  position: absolute;
+  padding: 10px;
+  background: white;
+  border: 2px solid black;
+  border-radius: 0px; /* ← 角丸を削除 */
+  cursor: move;
+  min-width: 100px;
+  text-align: center;
+  user-select: none;
+  color: black;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+}
+.circle {
+  width: 100px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: white;
+  border: 2px solid black;
+  color: black;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
 
-    .node {
-      position: absolute;
-      padding: 10px;
-      background: white;
-      border: 2px solid black; /* ← 黒い縁 */
-      border-radius: 12px;
-      cursor: move;
-      min-width: 100px;
-      text-align: center;
-      user-select: none;
-      color: black;
-      box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1); /* 軽い影を追加 */
-    }
+  /* 楕円形 */
+  border-radius: 50% / 50%;
+}
+
+
+
 
     .decision {
       width: 100px;
@@ -84,6 +101,7 @@
       user-select: none;
       color: inherit;
     }
+
 
     svg {
       position: absolute;
@@ -122,6 +140,7 @@
 <body>
   <div id="toolbar">
     <button onclick="addNode('process')">処理ノードを追加</button>
+    <button onclick="addNode('circle')">丸型処理ノードを追加</button>
     <button onclick="addNode('decision')">条件分岐ノードを追加</button>
     <button onclick="exportImage()">画像として保存</button>
     <button onclick="undo()">Undo</button>
@@ -140,11 +159,13 @@
 
   <div id="canvas">
     <svg id="lines">
-      <defs>
-        <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L0,6 L9,3 z" />
-        </marker>
-      </defs>
+     <defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="5"
+          orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L0,10 L10,5 z" fill="black" />
+  </marker>
+</defs>
+
     </svg>
   </div>
 
@@ -220,28 +241,30 @@
       });
       drawConnections();
     }
+function addNode(type) {
+  const node = document.createElement('div');
+  node.className = 'node ' + type;
+  node.style.left = '100px';
+  node.style.top = '100px';
+  node.style.color = 'black';
 
-    function addNode(type) {
-      const node = document.createElement('div');
-      node.className = 'node ' + type;
-      node.style.left = '100px';
-      node.style.top = '100px';
-      node.style.color = 'black'; // 追加: 文字色初期値
-      if (type === 'decision') {
-        const span = document.createElement('span');
-        span.textContent = '条件?';
-        node.appendChild(span);
-      } else {
-        node.textContent = '処理';
-      }
-      node.addEventListener('click', (e) => {
-        e.stopPropagation();
-        selectNode(node);
-      });
-      makeDraggable(node);
-      document.getElementById('canvas').appendChild(node);
-      saveHistory();
-    }
+  if (type === 'decision') {
+    const span = document.createElement('span');
+    span.textContent = '条件?';
+    node.appendChild(span);
+  } else {
+    node.textContent = '処理';
+  }
+
+  node.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectNode(node);
+  });
+  makeDraggable(node);
+  document.getElementById('canvas').appendChild(node);
+  saveHistory();
+}
+
 
     function makeDraggable(el) {
       let offsetX, offsetY;
@@ -350,41 +373,54 @@
 
     // 削除ボタンは消したのでこの関数は残しますが編集ツールバーからの呼び出しはなし
 
-    function drawConnections() {
-      const svg = document.getElementById('lines');
-      svg.innerHTML = svg.innerHTML.split('</defs>')[0] + '</defs>';
-      connections.forEach(({ from, to, label }, index) => {
-        const fromRect = from.getBoundingClientRect();
-        const toRect = to.getBoundingClientRect();
-        const canvasRect = document.getElementById('canvas').getBoundingClientRect();
+function drawConnections() {
+  const svg = document.getElementById('lines');
+  svg.innerHTML = svg.innerHTML.split('</defs>')[0] + '</defs>';
+  connections.forEach(({ from, to, label }, index) => {
+    const fromRect = from.getBoundingClientRect();
+    const toRect = to.getBoundingClientRect();
+    const canvasRect = document.getElementById('canvas').getBoundingClientRect();
 
-        const x1 = fromRect.left + fromRect.width / 2 - canvasRect.left;
-        const y1 = fromRect.top + fromRect.height / 2 - canvasRect.top;
-        const x2 = toRect.left + toRect.width / 2 - canvasRect.left;
-        const y2 = toRect.top + toRect.height / 2 - canvasRect.top;
+    const x1 = fromRect.left + fromRect.width / 2 - canvasRect.left;
+    const y1 = fromRect.top + fromRect.height / 2 - canvasRect.top;
 
-        const midX = (x1 + x2) / 2;
+    // toノードの中央x座標（横軸折れポイント）
+    const x2_center = toRect.left + toRect.width / 2 - canvasRect.left;
 
-        const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-        polyline.setAttribute("points", `${x1},${y1} ${midX},${y1} ${midX},${y2} ${x2},${y2}`);
-        polyline.setAttribute('data-index', index);
-        polyline.style.cursor = 'pointer';
-        polyline.addEventListener('click', (e) => {
-          e.stopPropagation();
-          selectConnection(index);
-        });
-        svg.appendChild(polyline);
+    // toノードの上辺y座標（縦折れポイント兼線の終点）
+    const y2 = toRect.top - canvasRect.top;
 
-        if (label) {
-          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-          text.setAttribute("x", midX + 5);
-          text.setAttribute("y", (y1 + y2) / 2);
-          text.setAttribute("class", "connection-label");
-          text.textContent = label;
-          svg.appendChild(text);
-        }
-      });
+    // 折れ線のポイント（3点折れ）
+    const points = [
+      `${x1},${y1}`,        // fromの中心
+      `${x2_center},${y1}`, // 横はtoの中央、縦はfromのy（折れ）
+      `${x2_center},${y2}`, // 横はtoの中央、縦はtoの上辺
+    ].join(' ');
+
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", points);
+    polyline.setAttribute('data-index', index);
+    polyline.setAttribute("marker-end", "url(#arrow)");
+    polyline.style.cursor = 'pointer';
+    polyline.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectConnection(index);
+    });
+    svg.appendChild(polyline);
+
+    if (label) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      // ラベルは折れ線の折れ点の少し右上あたりに表示（任意調整可）
+      text.setAttribute("x", x2_center + 5);
+      text.setAttribute("y", (y1 + y2) / 2 - 5);
+      text.setAttribute("class", "connection-label");
+      text.textContent = label;
+      svg.appendChild(text);
     }
+  });
+}
+
+
 
     document.getElementById('canvas').addEventListener('click', () => {
       selectedNode = null;
@@ -417,6 +453,17 @@
         return hex.length === 1 ? "0" + hex : hex;
       }).join('');
     }
+
+    function exportImage() {
+  const canvasElement = document.getElementById('canvas');
+  html2canvas(canvasElement).then(canvas => {
+    const link = document.createElement('a');
+    link.download = 'flowchart.png'; // ダウンロードファイル名
+    link.href = canvas.toDataURL('image/png'); // 画像のURL
+    link.click(); // 自動的にダウンロードを開始
+  });
+}
+
   </script>
 </body>
 </html>
